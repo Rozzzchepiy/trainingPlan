@@ -3,8 +3,20 @@ from tkinter import ttk
 from datetime import datetime, timedelta
 from tkinter import messagebox
 import csv
+import tkinter.filedialog
+
+"""
+Тренувальний планувальник для силових вправ
+Програма допомагає розрахувати максимальний результат на 1 повторення (1RM)
+та генерує персоналізований тренувальний план для досягнення цільових показників.
+"""
 
 class App(tk.Tk):
+    """
+    Створює:
+    - Вкладку для розрахунку максимуму (`MaxCalculate`).
+    - Вкладку для планування тренувань (`PlanTrainings`).
+    """
     def __init__(self):
         super().__init__()
         self.title("Програма")
@@ -112,6 +124,15 @@ class MaxCalculate(ttk.Frame):
             if weight <= 0 or reps <= 0:
                 raise ValueError("Значення мають бути більше нуля")
             
+            if reps > 12:  
+                messagebox.showwarning("Зауваження", 
+                        "Розрахунок може бути менш точним для кількості повторень більше 12.", 
+                        parent=self)
+            if weight > 500:
+               messagebox.showwarning("Попередження",
+                        "Вказана вага перевищує 500 кг.\nЦе може бути небезпечно.\nПеревірте, чи дані введені правильно.",
+                    parent=self)
+            
             if formula == "O'Conner":
                 max_weight = weight * (1 + 0.025 * reps)
             elif formula == "Brzycki":
@@ -140,7 +161,13 @@ class PlanTrainings(ttk.Frame):
         super().__init__(parent, style="Gray.TFrame", width=950, height=550)  
         self.pack_propagate(False) 
         self.app = app
-        
+        self.MAX_TRAINING_DAYS = 3
+        self.GENERAL_WARNING_TEXT = (
+            "⚠️ Увага: Ви вибрали тренування у послідовні дні або більше 3 разів на тиждень.\n"
+            "Це може призвести до недостатнього відновлення м'язів та неможливості виконання\n"
+            "запланованого об'єму. При такому графіку рекомендується знизити інтенсивність\n"
+            "або використовувати поділ за групами м'язів."
+        )
         # Заголовок
         title_label = tk.Label(self, text="Налаштування плану тренувань", font=("Arial", 14, "bold"))
         title_label.pack(pady=(20, 0))
@@ -161,13 +188,13 @@ class PlanTrainings(ttk.Frame):
         
         
         # Ціль 
-        target = ttk.Frame(main_frame)
-        target.pack(fill="x", pady=(0, 15))
+        target_frame = ttk.Frame(main_frame)
+        target_frame.pack(fill="x", pady=(0, 15))
         
-        target_label = tk.Label(target, text="Цільовий максимум 1RM (кг):", font=("Arial", 11))
+        target_label = tk.Label(target_frame, text="Цільовий максимум 1RM (кг):", font=("Arial", 11))
         target_label.pack(anchor="w")
         
-        self.target_entry = tk.Spinbox(target, from_=0, to=500, increment=5, font=("Arial", 11), wrap=True, relief="solid", bd=1)
+        self.target_entry = tk.Spinbox(target_frame, from_=0, to=500, increment=5, font=("Arial", 11), wrap=True, relief="solid", bd=1)
         self.target_entry.pack(fill="x", pady=(5, 0))
 
         # Дата початку тренувань
@@ -181,27 +208,31 @@ class PlanTrainings(ttk.Frame):
         self.date_entry.pack(fill="x", pady=(5, 0))
         self.date_entry.insert(0, datetime.now().strftime("%Y-%m-%d"))
 
+        days_selection_frame = ttk.Frame(main_frame) # Новий фрейм для мітки та чекбоксів
+        days_selection_frame.pack(fill="x", pady=(5,0))
+
+        days_label = tk.Label(days_selection_frame, text="Оберіть дні ваших тренувань:", font=("Arial", 11))
+        days_label.pack(anchor="w")
+
+        checkboxes_frame = ttk.Frame(days_selection_frame) # Фрейм для самих чекбоксів
+        checkboxes_frame.pack(anchor="w", pady=(5,0))
 
         self.day_vars = []
-        days_frame = ttk.Frame(main_frame)
-        days_frame.pack(fill="x", pady=(5, 0))
-        
-        
-        days_label = tk.Label(days_frame, text="Оберіть дні ваших тренувань:", font=("Arial", 11))
-        days_label.pack(anchor="w")
-        
-       
-        # Чекбокси для вибору днів тренувань
         days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
-        for i, day in enumerate(days):
+        for i, day_name in enumerate(days):
             var = tk.IntVar()
-            cb = ttk.Checkbutton(days_frame, text=day, variable=var)
-            cb.pack(side="left", padx=5, pady=5)
-            self.day_vars.append((var, i)) 
-        
-        button_frame = tk.Frame(main_frame)  
+            cb = ttk.Checkbutton(checkboxes_frame, text=day_name, variable=var, command=self._validate_training_days)
+            cb.pack(side="left", padx=5) 
+            self.day_vars.append((var, i))
+
+        # попередження
+        self.warning_label = tk.Label(main_frame, text="", font=("Arial", 10, "italic"), fg="red", justify="left")
+        self.warning_label.pack(fill="x", pady=(5, 10), anchor="w")
+        self._validate_training_days() 
+
+        button_frame = tk.Frame(main_frame)
         button_frame.pack(pady=(10, 0))
-        
+       
         # використання 1RM
         self.calculate_button = tk.Button(button_frame, text="Використати розрахованний 1RM", font=("Arial", 11), 
                                         relief="solid",
@@ -218,9 +249,32 @@ class PlanTrainings(ttk.Frame):
                                         command=self.generate_workout_plan)
         self.calculate_button.pack(side="left")
         
-        
+    def _validate_training_days(self):
+        """Перевіряє вибрані дні тренувань та відображає ОДНЕ загальне попередження."""
+        selected_day_indices = sorted([day_idx for var, day_idx in self.day_vars if var.get() == 1])
+        num_selected_days = len(selected_day_indices)
+        is_problem = False
+
+        if num_selected_days > self.MAX_TRAINING_DAYS:
+            is_problem = True
+
+        if not is_problem and num_selected_days > 1:
+            for i in range(num_selected_days - 1):
+                if selected_day_indices[i+1] - selected_day_indices[i] == 1:
+                    is_problem = True
+                    break 
+
+            # Неділя + понеділок
+            if not is_problem and 0 in selected_day_indices and 6 in selected_day_indices:
+                 is_problem = True
+
+        if is_problem:
+            self.warning_label.config(text=self.GENERAL_WARNING_TEXT)
+            return False # проблеми
+        else:
+            self.warning_label.config(text="")
+            return True # Все добре        
     
-        
     def use_calculated_max(self):
         """Вставка розрахованого максимуму у поле"""
         if self.app.calculated_max is not None:
@@ -232,7 +286,64 @@ class PlanTrainings(ttk.Frame):
     def round_to_standard_weight(self, weight):
         """Округлення ваги до стандартних блисків (2.5 кг)"""
         return round(weight / 2.5) * 2.5
+
+    def get_ukrainian_plural(self, number, one, few, many):
+        """Допоміжна функція для української плюралізації."""
+        num_abs = abs(number)
+        if num_abs % 10 == 1 and num_abs % 100 != 11:
+            return one
+        if num_abs % 10 in [2, 3, 4] and num_abs % 100 not in [12, 13, 14]:
+            return few
+        return many
+
+    def calculate_time_difference(self, start_date_dt, target_reach_date_dt):
+        """
+        Розраховує різницю в часі між двома об'єктами datetime.
+        Повертає відформатований рядок та загальну кількість днів.
+        """
+        if not isinstance(start_date_dt, datetime) or not isinstance(target_reach_date_dt, datetime):
+            try: # Спроба розпарсити, якщо передані рядки
+                if isinstance(start_date_dt, str):
+                    start_date_dt = datetime.strptime(start_date_dt, "%Y-%m-%d")
+                if isinstance(target_reach_date_dt, str):
+                    target_reach_date_dt = datetime.strptime(target_reach_date_dt, "%Y-%m-%d")
+            except ValueError:
+                return "Невірний формат дати", 0
+        
+        if target_reach_date_dt < start_date_dt:
+            return "Цільова дата раніше стартової", 0
+
+        delta = target_reach_date_dt - start_date_dt
+        total_days = delta.days
+
+        if total_days == 0:
+            return "Сьогодні", 0
+        
+        # Наближений розрахунок років, місяців, днів для відображення
+        years = total_days // 365
+        remaining_days_after_years = total_days % 365
+        months = remaining_days_after_years // 30  # Наближення
+        days_display = remaining_days_after_years % 30
+
+        parts = []
+        if years > 0:
+            parts.append(f"{years} {self.get_ukrainian_plural(years, 'рік', 'роки', 'років')}")
+        if months > 0:
+            parts.append(f"{months} {self.get_ukrainian_plural(months, 'місяць', 'місяці', 'місяців')}")
+        
+        # Додаємо дні, якщо вони є, або якщо це єдина одиниця часу (тобто роки та місяці нульові, але total_days > 0)
+        if days_display > 0 or (years == 0 and months == 0 and total_days > 0):
+            # Якщо роки та місяці = 0, відображаємо total_days замість days_display
+            actual_days_to_show = days_display if (years > 0 or months > 0) else total_days
+            parts.append(f"{actual_days_to_show} {self.get_ukrainian_plural(actual_days_to_show, 'день', 'дні', 'днів')}")
+        
+        if not parts and total_days > 0: # Запасний варіант, якщо попередня логіка не додала жодної частини
+             parts.append(f"{total_days} {self.get_ukrainian_plural(total_days, 'день', 'дні', 'днів')}")
+        
+        time_diff_str = ", ".join(parts)
             
+        return time_diff_str, total_days
+    
     def generate_workout_plan(self):
         """Генерація плану тренувань на основі введених даних"""
         try:
@@ -241,13 +352,26 @@ class PlanTrainings(ttk.Frame):
             start_date = datetime.strptime(self.date_entry.get(), "%Y-%m-%d")
             selected_days = [i for var, i in self.day_vars if var.get() == 1]
             
-            if not selected_days:
-                raise ValueError("Оберіть хоча б один день для тренувань")
             if current_max <= 0 or target_max <= 0:
                 raise ValueError("Максимум має бути більше нуля")
-            if current_max >= target_max:
-                raise ValueError("Поточний максимум має бути меншим за цільовий")
+            if target_max < current_max:
+                raise ValueError("Цільовий максимум не може бути меншим за поточний")
+            if not selected_days:
+                raise ValueError("Оберіть хоча б один день для тренувань")
             
+            response = True
+            
+            if target_max > current_max * 1.3:
+                response = messagebox.askyesno(
+                    "Амбітна ціль",
+                    f"Цільовий максимум ({target_max:.1f} кг) значно перевищує поточний ({current_max:.1f} кг).\n"
+                    "Досягнення цієї цілі за згенерованим планом може бути нереалістичним.\n"
+                    "Бажаєте продовжити генерацію?",
+                    icon='warning',
+                    parent=self.app)
+            if not response:
+                return
+
             # Генерація плану тренувань
             base_weight = self.round_to_standard_weight(current_max * 0.8)
             plan = []
@@ -330,6 +454,10 @@ class PlanTrainings(ttk.Frame):
                         })
                     training_number += 1
             
+            if not plan: # Якщо жодного тренування не було згенеровано (наприклад, current_max вже близький до target_max * 0.8)
+                messagebox.showinfo("Інформація", "Ціль вже досягнута або дуже близька, план не потребує генерації.", parent=self)
+                return
+
             current_date = start_date
             
             # Знаходимо перший вибраний день, який є після початкової дати або в той самий день
@@ -357,13 +485,13 @@ class PlanTrainings(ttk.Frame):
             messagebox.showerror("Помилка", f"Сталася помилка: {str(e)}")
     
     def show_workout_plan(self, plan):
+        """Відображення згенерованого плану тренувань у новому вікні"""
         plan_window = tk.Toplevel(self)
         plan_window.title("План тренувань")
-        plan_window.geometry("1000x700")
         plan_window.configure(bg="#f0f0f0")
         
         window_width = 1050
-        window_height = 700
+        window_height = 750
         screen_width = plan_window.winfo_screenwidth()
         screen_height = plan_window.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -387,7 +515,7 @@ class PlanTrainings(ttk.Frame):
         title_label.pack()
         
         container = tk.Frame(plan_window)
-        container.pack(fill="both", expand=True, padx=20, pady=(0, 15))
+        container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
         
         # Створення Treeview
         columns = ("Цикл", "Тренування", "Дата", "Вага (кг)", "Підходи", "Повторення")
@@ -422,6 +550,43 @@ class PlanTrainings(ttk.Frame):
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
         
+        target_info_frame = tk.Frame(plan_window, bg="#f0f0f0")
+        target_info_frame.pack(pady=(5, 10), fill="x", padx=20) 
+
+        self.target_info_label = tk.Label(target_info_frame, text="",
+                                           font=("Arial", 10), 
+                                           bg="#f0f0f0", 
+                                           justify="left")
+        self.target_info_label.pack(anchor="w")
+
+        target_reach_date_str = None
+        if plan: 
+            target_reach_date_str = plan[-1]["Дата"] 
+
+        if target_reach_date_str:
+            try:
+                
+                start_date_str_val = self.date_entry.get() 
+                start_date_dt_val = datetime.strptime(start_date_str_val, "%Y-%m-%d")
+
+                target_max_float_val = float(self.target_entry.get())
+
+                target_reach_date_dt = datetime.strptime(target_reach_date_str, "%Y-%m-%d")
+                
+                time_diff_str, days_count = self.calculate_time_difference(start_date_dt_val, target_reach_date_dt)
+                
+                days_plural = self.get_ukrainian_plural(days_count, 'день', 'дні', 'днів')
+                self.target_info_label.config(
+                    text=f"Ціль ({target_max_float_val:.1f} кг) буде досягнута приблизно {target_reach_date_str}.\n" +
+                         f"Час до досягнення: {time_diff_str} ({days_count} {days_plural})."
+                )
+            except ValueError as e:
+                self.target_info_label.config(text=f"Не вдалося розрахувати інформацію про ціль (ValueError): {e}")
+            except Exception as e: 
+                self.target_info_label.config(text=f"Помилка відображення інформації про ціль: {e}")
+        else:
+            self.target_info_label.config(text="Не вдалося визначити дату досягнення цілі (план порожній).")
+
         button_frame = tk.Frame(plan_window)
         button_frame.pack(pady=(10, 15))
         
@@ -438,13 +603,13 @@ class PlanTrainings(ttk.Frame):
         export_button = tk.Button(button_frame, 
                                 text="Експорт у CSV", 
                                 command=lambda: self.export_to_csv(plan),
-                                **button_style)
+                                **button_style, cursor="hand2")
         export_button.pack(side="left", padx=10)
         
         close_button = tk.Button(button_frame, 
                             text="Закрити", 
                             command=plan_window.destroy,
-                            **{**button_style, "bg": "#f44336", "activebackground": "#d32f2f"})
+                            **{**button_style, "bg": "#f44336", "activebackground": "#d32f2f"}, cursor="hand2")
         close_button.pack(side="left", padx=10)
         
         # Додаткові налаштування Treeview
